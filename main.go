@@ -2,8 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"strings"
+	"os"
 	bencode "github.com/jackpal/bencode-go"
 )
 
@@ -19,11 +18,19 @@ type Result struct {
 }
 
 func main(){
-	var test io.Reader = strings.NewReader(`d5:emailld5:where4:home4:addr15:gre@example.comed5:where4:work4:addr12:gre@work.comee4:name14:Grace R. Emlin7:address15:123 Main Streete`)
+	inputPath := os.Args[1]
+	outputPath := os.Args[2]
 	var r = Result{}
-	fmt.Println(test)
+	fmt.Println(inputPath, outputPath)
+
+	file, err := os.Open(inputPath)
+
+	if err != nil {
+		fmt.Println("Error opening torrent file", err)
+	}
+	defer file.Close()
 	
-	err :=  bencode.Unmarshal(test, &r)
+	err =  bencode.Unmarshal(file, &r)
 	if err != nil {
 		fmt.Println("Error Unmarshalling:", err)
 	}
