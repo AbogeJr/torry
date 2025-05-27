@@ -2,9 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 
 	bencode "github.com/jackpal/bencode-go"
 )
@@ -28,6 +34,36 @@ type bencodeTorrentInfo struct {
 type bencodeTorrent struct {
 	Announce string             `bencode:"announce"`
 	Info     bencodeTorrentInfo `bencode:"info"`
+}
+
+type trackerURLResponse struct {
+	Interval int    `bencode:"interval"`
+	Peers    string `bencode:"peers"`
+}
+
+type Peer struct {
+	IP   net.IP
+	Port uint16
+}
+
+func UnmarshallPeers(binPeerList []byte) ([]Peer, error) {
+	peerSize := 6
+
+	if len(binPeerList)%peerSize != 0 {
+		err := fmt.Errorf("received malformed peers list of size %d", len(binPeerList))
+		return []Peer{}, err
+	}
+
+	peerCount := len(binPeerList) / peerSize
+	peerList := make([]Peer, peerCount)
+
+	for i := range peerCount {
+		offset := i * peerSize
+		peerList[i].IP = net.IP(binPeerList[offset : offset+4])
+		peerList[i].Port = binary.BigEndian.Uint16(binPeerList[offset+4 : offset+6])
+	}
+
+	return peerList, nil
 }
 
 func (btfo *bencodeTorrent) toProcessedTorrentFile() (TorrentFile, error) {
@@ -117,6 +153,28 @@ func openTorrentFile(filePath string) (TorrentFile, error) {
 	return bt.toProcessedTorrentFile()
 }
 
+func (tf *TorrentFile) buildTrackerURL(peerId [20]byte, port uint16) (string, error) {
+	base, err := url.Parse(tf.Announce)
+
+	if err != nil {
+		fmt.Println("Error Parsing URL:", err)
+	}
+
+	params := url.Values{
+		"info_hash":  []string{string(tf.InfoHash[:])},
+		"peer_id":    []string{string(peerId[:])},
+		"port":       []string{strconv.Itoa(int(port))},
+		"uploaded":   []string{"0"},
+		"downloaded": []string{"0"},
+		"compact":    []string{"1"},
+		"left":       []string{strconv.Itoa(int(tf.Length))},
+	}
+
+	base.RawQuery = params.Encode()
+
+	return base.String(), nil
+}
+
 func main() {
 	inputPath := os.Args[1]
 	// outputPath := os.Args[2]
@@ -127,5 +185,52 @@ func main() {
 		fmt.Println(err)
 	}
 
-	fmt.Printf("%+v\n", torrentFile)
+	var peerID [20]byte
+
+	_, err = rand.Read(peerID[:])
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	trackerURL, err := torrentFile.buildTrackerURL(peerID, 2131)
+	/* note
+	This is what the URL looks like after encoding the params
+		http://bttracker.debian.org:6969/announce?compact=1&downloaded=0&info
+		_hash=%A5%94%DF%3A%B9%B4%D3%95b%CC%05%F91%98i%A2%18%12%1FG&left=67842
+		8672&peer_id=e%F5_GM%B3hRJ~%A69%04%EC%9Ft%98%B3%14%24&port=2131&uploa
+		ded=0
+	*/
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	resp, err := http.Get(trackerURL)
+
+	if err != nil {
+		fmt.Println("Error sending request to tracker URL", err)
+	}
+
+	defer resp.Body.Close()
+
+	trackerResponse := trackerURLResponse{}
+
+	err = bencode.Unmarshal(resp.Body, &trackerResponse)
+
+	if err != nil {
+		fmt.Println("Error parsing tracker response", err)
+	}
+
+	/*
+		note: casting the bencoded peers binary string to a slice of bytes for
+		processing/unmarshalling
+	*/
+	peers, err := UnmarshallPeers([]byte(trackerResponse.Peers))
+
+	if err != nil {
+		fmt.Println("Error unmarshalling peers", err)
+	}
+
+	for i := range len(peers) {
+		fmt.Printf("%+v\n", peers[i].IP)
+	}
 }
