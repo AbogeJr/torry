@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strconv"
 )
 
 type Peer struct {
@@ -34,4 +35,8 @@ func UnmarshallPeers(binPeerList []byte) ([]Peer, error) {
 	}
 
 	return peerList, nil
+}
+
+func (p Peer) Stringify() string {
+	return net.JoinHostPort(p.IP.String(), strconv.Itoa(int(p.Port)))
 }
