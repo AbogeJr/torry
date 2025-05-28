@@ -8,6 +8,7 @@ import (
 	"os"
 
 	handshake "torry/handshake"
+	message "torry/message"
 	peers "torry/peers"
 	torrentfile "torry/torrentfile"
 
@@ -84,5 +85,20 @@ func main() {
 		fmt.Println("Error reading handshake")
 	}
 	fmt.Printf("%+v\n", *hs)
+
+	fmt.Println("Message test")
+
+	ms := message.Message{
+		ID:      69,
+		Payload: []byte{1, 2, 3, 4, 5, 6, 7, 8},
+	}
+	serializedMessage := ms.Serialize()
+	fmt.Println("Serialized message", serializedMessage)
+	reader = bytes.NewReader(serializedMessage)
+	msg, err := message.Read(reader)
+	if err != nil {
+		fmt.Println("Error reading handshake", err)
+	}
+	fmt.Println("Read Message", msg)
 
 }
