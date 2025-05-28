@@ -68,6 +68,7 @@ func (h *Handshake) Serialize() []byte {
 }
 
 func ReadHandshake(r io.Reader) (*Handshake, error) {
+
 	pstrLengthBuffer := make([]byte, 1)
 
 	_, err := io.ReadFull(r, pstrLengthBuffer)
@@ -91,7 +92,7 @@ func ReadHandshake(r io.Reader) (*Handshake, error) {
 	var peerId, infoHash [20]byte
 
 	copy(infoHash[:], handshakeBuff[pstrlen+8:pstrlen+8+20])
-	copy(peerId[:], handshakeBuff[pstrlen+8:pstrlen+8+20+20])
+	copy(peerId[:], handshakeBuff[pstrlen+8+20:pstrlen+8+20+20])
 
 	h := Handshake{
 		Pstr:     string(handshakeBuff[:pstrlen]),
