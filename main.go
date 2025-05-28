@@ -3,240 +3,22 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha1"
-	"encoding/binary"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"strconv"
+
+	handshake "torry/handshake"
+	peers "torry/peers"
+	torrentfile "torry/torrentfile"
 
 	bencode "github.com/jackpal/bencode-go"
 )
-
-type TorrentFile struct {
-	Announce    string
-	InfoHash    [20]byte
-	PieceHashes [][20]byte
-	PieceLength int
-	Length      int
-	Name        string
-}
-
-type bencodeTorrentInfo struct {
-	Pieces      string `bencode:"pieces"`
-	PieceLength int    `bencode:"piece length"`
-	Length      int    `bencode:"length"`
-	Name        string `bencode:"name"`
-}
-
-type bencodeTorrent struct {
-	Announce string             `bencode:"announce"`
-	Info     bencodeTorrentInfo `bencode:"info"`
-}
-
-type trackerURLResponse struct {
-	Interval int    `bencode:"interval"`
-	Peers    string `bencode:"peers"`
-}
-
-type Peer struct {
-	IP   net.IP
-	Port uint16
-}
-
-type Handshake struct {
-	Pstr     string
-	Infohash [20]byte
-	PeerId   [20]byte
-}
-
-func (h *Handshake) Serialize() []byte {
-	// note: the bittorrent handshake will be 68 bytes long
-	buf := make([]byte, len(h.Pstr)+49)
-
-	buf[0] = byte(len(h.Pstr))
-	currentIndex := 1 //note: buff[0] is currently holding our pstr length
-	currentIndex += copy(buf[currentIndex:], []byte(h.Pstr))
-	currentIndex += copy(buf[currentIndex:], make([]byte, 8))
-	currentIndex += copy(buf[currentIndex:], h.Infohash[:])
-	currentIndex += copy(buf[currentIndex:], h.PeerId[:])
-
-	return buf
-}
-
-func ReadHandshake(r io.Reader) (*Handshake, error) {
-
-	pstrLengthBuffer := make([]byte, 1)
-
-	_, err := io.ReadFull(r, pstrLengthBuffer)
-
-	if err != nil {
-		return &Handshake{}, err
-	}
-
-	pstrlen := int(pstrLengthBuffer[0])
-
-	if pstrlen == 0 {
-		fmt.Println("pstr length cannot be 0")
-	}
-
-	handshakeBuff := make([]byte, pstrlen+48)
-	_, err = io.ReadFull(r, handshakeBuff)
-	if err != nil {
-		return &Handshake{}, err
-	}
-
-	var peerId, infoHash [20]byte
-
-	copy(infoHash[:], handshakeBuff[pstrlen+8:pstrlen+8+20])
-	copy(peerId[:], handshakeBuff[pstrlen+8+20:pstrlen+8+20+20])
-
-	h := Handshake{
-		Pstr:     string(handshakeBuff[:pstrlen]),
-		Infohash: infoHash,
-		PeerId:   peerId,
-	}
-
-	return &h, nil
-}
-
-func UnmarshallPeers(binPeerList []byte) ([]Peer, error) {
-	peerSize := 6
-
-	if len(binPeerList)%peerSize != 0 {
-		err := fmt.Errorf("received malformed peers list of size %d", len(binPeerList))
-		return []Peer{}, err
-	}
-
-	peerCount := len(binPeerList) / peerSize
-	peerList := make([]Peer, peerCount)
-
-	for i := range peerCount {
-		offset := i * peerSize
-		peerList[i].IP = net.IP(binPeerList[offset : offset+4])
-		peerList[i].Port = binary.BigEndian.Uint16(binPeerList[offset+4 : offset+6])
-	}
-
-	return peerList, nil
-}
-
-func (btfo *bencodeTorrent) toProcessedTorrentFile() (TorrentFile, error) {
-	infoHash, err := btfo.Info.hash()
-	if err != nil {
-		return TorrentFile{}, err
-	}
-
-	pieceHashes, err := btfo.Info.splitPieceHashes()
-	if err != nil {
-		return TorrentFile{}, err
-	}
-
-	t := TorrentFile{
-		Announce:    btfo.Announce,
-		InfoHash:    infoHash,
-		PieceHashes: pieceHashes,
-		PieceLength: btfo.Info.PieceLength,
-		Length:      btfo.Info.Length,
-		Name:        btfo.Info.Name,
-	}
-
-	return t, nil
-}
-
-func (btfi *bencodeTorrentInfo) hash() ([20]byte, error) {
-	var buff bytes.Buffer
-
-	err := bencode.Marshal(&buff, *btfi)
-	if err != nil {
-		fmt.Println("Error marshalling torrent info into buffer", err)
-	}
-
-	infohash := sha1.Sum(buff.Bytes())
-
-	return infohash, nil
-}
-
-func (btfi *bencodeTorrentInfo) splitPieceHashes() ([][20]byte, error) {
-	hashLength := 20
-
-	// note: casting the binary hashes into bytes and storing in a buffer
-	buff := []byte(btfi.Pieces)
-
-	if len(buff)%hashLength != 0 {
-		err := fmt.Errorf("malformed pieces of length %d", len(buff))
-		return [][20]byte{}, err
-	}
-
-	hashesCount := len(buff) / hashLength
-	hashes := make([][20]byte, hashesCount)
-
-	for i := range hashesCount {
-		/*
-			note: basically constucting n slices of 20-byte arrays of hashes
-			where n is the hashesCount calculated earlier. hashes[0] is the
-			first piece hash
-		*/
-		copy(hashes[i][:], buff[i*hashLength:(i+1)*hashLength])
-	}
-
-	return hashes, nil
-}
-
-func openTorrentFile(filePath string) (TorrentFile, error) {
-
-	file, err := os.Open(filePath)
-
-	if err != nil {
-		fmt.Println("Error opening torrent file", err)
-	}
-
-	defer file.Close()
-
-	bt := bencodeTorrent{}
-
-	/*
-		note: we are parsing the content of the torrent file and
-		storing it's values in an struct/object (bencodeTorrent)
-	*/
-	err = bencode.Unmarshal(file, &bt)
-
-	if err != nil {
-		fmt.Println("Error Unmarshalling:", err)
-	}
-
-	return bt.toProcessedTorrentFile()
-}
-
-func (tf *TorrentFile) buildTrackerURL(peerId [20]byte, port uint16) (string, error) {
-	base, err := url.Parse(tf.Announce)
-
-	if err != nil {
-		fmt.Println("Error Parsing URL:", err)
-	}
-
-	params := url.Values{
-		"info_hash":  []string{string(tf.InfoHash[:])},
-		"peer_id":    []string{string(peerId[:])},
-		"port":       []string{strconv.Itoa(int(port))},
-		"uploaded":   []string{"0"},
-		"downloaded": []string{"0"},
-		"compact":    []string{"1"},
-		"left":       []string{strconv.Itoa(int(tf.Length))},
-	}
-
-	base.RawQuery = params.Encode()
-
-	return base.String(), nil
-}
 
 func main() {
 	inputPath := os.Args[1]
 	// outputPath := os.Args[2]
 
-	torrentFile, err := openTorrentFile(inputPath)
+	torrentFile, err := torrentfile.OpenTorrentFile(inputPath)
 
 	if err != nil {
 		fmt.Println(err)
@@ -249,7 +31,7 @@ func main() {
 		fmt.Println(err)
 	}
 
-	trackerURL, err := torrentFile.buildTrackerURL(peerID, 2131)
+	trackerURL, err := torrentFile.BuildTrackerURL(peerID, 2131)
 	/* note
 	This is what the URL looks like after encoding the params
 		http://bttracker.debian.org:6969/announce?compact=1&downloaded=0&info
@@ -269,7 +51,7 @@ func main() {
 
 	defer resp.Body.Close()
 
-	trackerResponse := trackerURLResponse{}
+	trackerResponse := peers.TrackerURLResponse{}
 
 	err = bencode.Unmarshal(resp.Body, &trackerResponse)
 
@@ -287,7 +69,7 @@ func main() {
 	// 	fmt.Println("Error unmarshalling peers", err)
 	// }
 
-	peerHandshake := Handshake{
+	peerHandshake := handshake.Handshake{
 		Pstr:     "Bittorrent Protocol",
 		Infohash: torrentFile.InfoHash,
 		PeerId:   peerID,
@@ -297,7 +79,7 @@ func main() {
 	// fmt.Println(peers)
 	// fmt.Println(serializedHandshake)
 	reader := bytes.NewReader(serializedHandshake)
-	hs, err := ReadHandshake(reader)
+	hs, err := handshake.ReadHandshake(reader)
 	if err != nil {
 		fmt.Println("Error reading handshake")
 	}
