@@ -2,11 +2,15 @@ package torrentfile
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"torry/downloader"
+	"torry/peers"
 
 	bencode "github.com/jackpal/bencode-go"
 )
@@ -119,7 +123,7 @@ func OpenTorrentFile(filePath string) (TorrentFile, error) {
 	return bt.toProcessedTorrentFile()
 }
 
-func (tf *TorrentFile) BuildTrackerURL(peerId [20]byte, port uint16) (string, error) {
+func (tf *TorrentFile) BuildTrackerURL(peerID [20]byte, port uint16) (string, error) {
 	base, err := url.Parse(tf.Announce)
 
 	if err != nil {
@@ -128,7 +132,7 @@ func (tf *TorrentFile) BuildTrackerURL(peerId [20]byte, port uint16) (string, er
 
 	params := url.Values{
 		"info_hash":  []string{string(tf.InfoHash[:])},
-		"peer_id":    []string{string(peerId[:])},
+		"peer_id":    []string{string(peerID[:])},
 		"port":       []string{strconv.Itoa(int(port))},
 		"uploaded":   []string{"0"},
 		"downloaded": []string{"0"},
@@ -139,4 +143,86 @@ func (tf *TorrentFile) BuildTrackerURL(peerId [20]byte, port uint16) (string, er
 	base.RawQuery = params.Encode()
 
 	return base.String(), nil
+}
+
+func (t *TorrentFile) getPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
+	trackerURL, err := t.BuildTrackerURL(peerID, port)
+	/* note
+	This is what the URL looks like after encoding the params
+		http://bttracker.debian.org:6969/announce?compact=1&downloaded=0&info
+		_hash=%A5%94%DF%3A%B9%B4%D3%95b%CC%05%F91%98i%A2%18%12%1FG&left=67842
+		8672&peer_id=e%F5_GM%B3hRJ~%A69%04%EC%9Ft%98%B3%14%24&port=2131&uploa
+		ded=0
+	*/
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	resp, err := http.Get(trackerURL)
+
+	if err != nil {
+		fmt.Println("Error sending request to tracker URL", err)
+	}
+
+	defer resp.Body.Close()
+
+	trackerResponse := peers.TrackerURLResponse{}
+
+	err = bencode.Unmarshal(resp.Body, &trackerResponse)
+
+	if err != nil {
+		fmt.Println("Error parsing tracker response", err)
+	}
+
+	/*
+		note: casting the bencoded peers binary string to a slice of bytes for
+		processing/unmarshalling
+	*/
+	peers, err := peers.UnmarshallPeers([]byte(trackerResponse.Peers))
+	if err != nil {
+		return nil, err
+	}
+
+	return peers, nil
+}
+
+func (t *TorrentFile) D2f(path string) error {
+	var peerID [20]byte
+	_, err := rand.Read(peerID[:])
+	if err != nil {
+		return err
+	}
+
+	peers, err := t.getPeers(peerID, 6881)
+	if err != nil {
+		return err
+	}
+
+	torrent := downloader.Torrent{
+		Peers:       peers,
+		PeerID:      peerID,
+		InfoHash:    t.InfoHash,
+		PieceHashes: t.PieceHashes,
+		PieceLength: t.PieceLength,
+		Length:      t.Length,
+		Name:        t.Name,
+	}
+
+	fmt.Println(torrent.Name)
+
+	buf, err := torrent.Download()
+	if err != nil {
+		return err
+	}
+
+	outFile, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+	_, err = outFile.Write(buf)
+	if err != nil {
+		return err
+	}
+	return nil
 }
