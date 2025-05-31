@@ -5,10 +5,16 @@ import (
 	"io"
 )
 
+/*
+NOTES
+- A handshake is required for two peers to communicate
+- We
+*/
+
 type Handshake struct {
 	Pstr     string
-	Infohash [20]byte
-	PeerId   [20]byte
+	InfoHash [20]byte
+	PeerID   [20]byte
 }
 
 func (h *Handshake) Serialize() []byte {
@@ -19,8 +25,8 @@ func (h *Handshake) Serialize() []byte {
 	currentIndex := 1 //note: buff[0] is currently holding our pstr length
 	currentIndex += copy(buf[currentIndex:], []byte(h.Pstr))
 	currentIndex += copy(buf[currentIndex:], make([]byte, 8))
-	currentIndex += copy(buf[currentIndex:], h.Infohash[:])
-	currentIndex += copy(buf[currentIndex:], h.PeerId[:])
+	currentIndex += copy(buf[currentIndex:], h.InfoHash[:])
+	currentIndex += copy(buf[currentIndex:], h.PeerID[:])
 
 	return buf
 }
@@ -32,7 +38,7 @@ func ReadHandshake(r io.Reader) (*Handshake, error) {
 	_, err := io.ReadFull(r, pstrLengthBuffer)
 
 	if err != nil {
-		return &Handshake{}, err
+		return nil, err
 	}
 
 	pstrlen := int(pstrLengthBuffer[0])
@@ -44,19 +50,29 @@ func ReadHandshake(r io.Reader) (*Handshake, error) {
 	handshakeBuff := make([]byte, pstrlen+48)
 	_, err = io.ReadFull(r, handshakeBuff)
 	if err != nil {
-		return &Handshake{}, err
+		return nil, err
 	}
 
-	var peerId, infoHash [20]byte
+	var peerID, infoHash [20]byte
 
 	copy(infoHash[:], handshakeBuff[pstrlen+8:pstrlen+8+20])
-	copy(peerId[:], handshakeBuff[pstrlen+8+20:pstrlen+8+20+20])
+	copy(peerID[:], handshakeBuff[pstrlen+8+20:pstrlen+8+20+20])
 
 	h := Handshake{
-		Pstr:     string(handshakeBuff[:pstrlen]),
-		Infohash: infoHash,
-		PeerId:   peerId,
+		Pstr:     string(handshakeBuff[0:pstrlen]),
+		InfoHash: infoHash,
+		PeerID:   peerID,
 	}
 
 	return &h, nil
+}
+
+func New(infohash [20]byte, peerID [20]byte) *Handshake {
+	h := Handshake{
+		Pstr:     "BitTorrent protocol",
+		InfoHash: infohash,
+		PeerID:   peerID,
+	}
+
+	return &h
 }
