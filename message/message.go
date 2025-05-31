@@ -2,6 +2,7 @@ package message
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 )
 
@@ -22,6 +23,78 @@ const (
 type Message struct {
 	ID      messageId
 	Payload []byte
+}
+
+func FormatRequestMsg(index, begin, length int) *Message {
+	payload := make([]byte, 12)
+
+	binary.BigEndian.PutUint32(payload[0:4], uint32(index))
+	binary.BigEndian.PutUint32(payload[4:8], uint32(begin))
+	binary.BigEndian.PutUint32(payload[8:12], uint32(length))
+
+	m := Message{
+		ID:      MsgRequest,
+		Payload: payload,
+	}
+
+	return &m
+}
+
+func FormatHaveMsg(index int) *Message {
+	payload := make([]byte, 4)
+
+	binary.BigEndian.PutUint32(payload, uint32(index))
+
+	m := Message{
+		ID:      MsgHave,
+		Payload: payload,
+	}
+
+	return &m
+}
+
+func ParsePiece(index int, buf []byte, msg *Message) (int, error) {
+	if msg.ID != MsgPiece {
+		return 0, fmt.Errorf("expected messageID %d but got %d", MsgPiece, msg.ID)
+	}
+
+	if len(msg.Payload) < 8 {
+		return 0, fmt.Errorf("too short ! (that's what she said): [%d]", len(msg.Payload))
+	}
+
+	pieceIndex := int(binary.BigEndian.Uint32(msg.Payload[0:4]))
+
+	if pieceIndex != index {
+		return 0, fmt.Errorf("expected piece index [%d] but got [%d]", index, pieceIndex)
+	}
+
+	begin := int(binary.BigEndian.Uint32(msg.Payload[4:8]))
+
+	if begin >= len(buf) {
+		return 0, fmt.Errorf("beginning index [%d] is too large for buffer length [%d]", begin, len(buf))
+	}
+	data := msg.Payload[8:]
+	if begin+len(data) > len(buf) {
+		return 0, fmt.Errorf("data is [%d] bytes; too large for buffer length [%d]", begin, len(buf))
+	}
+
+	copy(buf[begin:], data)
+
+	return len(data), nil
+}
+
+func ParseHave(msg *Message) (int, error) {
+	if msg.ID != MsgHave {
+		return 0, fmt.Errorf("expected messageID %d but got %d", MsgHave, msg.ID)
+	}
+
+	if len(msg.Payload) != 4 {
+		return 0, fmt.Errorf("expected payload to be 4bytes. got [%d]", len(msg.Payload))
+	}
+
+	index := int(binary.BigEndian.Uint32(msg.Payload))
+
+	return index, nil
 }
 
 func (m *Message) Serialize() []byte {
@@ -65,4 +138,42 @@ func Read(r io.Reader) (*Message, error) {
 	}
 
 	return &ms, nil
+}
+
+func (m *Message) name() string {
+	if m == nil {
+		return "KeepAlive"
+	}
+
+	switch m.ID {
+	case MsgChoke:
+		return "Choke"
+	case MsgUnchoke:
+		return "Unchoke"
+	case MsgInterested:
+		return "Interested"
+	case MsgNotInterested:
+		return "NotInterested"
+	case MsgHave:
+		return "Have"
+	case MsgBitfield:
+		return "Bitfield"
+	case MsgRequest:
+		return "Request"
+	case MsgPiece:
+		return "Piece"
+	case MsgCancel:
+		return "Cancel"
+	default:
+		return fmt.Sprintf("Unknown#%d", m.ID)
+	}
+
+}
+
+func (m *Message) Stringify() string {
+	if m == nil {
+		return m.name()
+	}
+
+	return fmt.Sprintf("%s [%d]", m.name(), len(m.Payload))
 }
