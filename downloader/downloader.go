@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"log"
-	"runtime"
 	"time"
 	"torry/client"
 	"torry/message"
@@ -171,7 +170,7 @@ func (t *Torrent) calculatePieceSize(index int) int {
 	return end - begin
 }
 
-func (t *Torrent) Download() ([]byte, error) {
+func (t *Torrent) Download(progressChan chan<- float64) ([]byte, error) {
 	log.Println("Starting Download for", t.Name)
 
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
@@ -194,9 +193,9 @@ func (t *Torrent) Download() ([]byte, error) {
 		copy(buf[begin:end], res.buf)
 		donePieces++
 
-		percent := float64(donePieces) / float64(len(t.PieceHashes)) * 100
-		numWorkers := runtime.NumGoroutine() - 1
-		log.Printf("(%0.2f%%) Downloaded piece #%d from %d peers\n", percent, res.index, numWorkers)
+		progressChan <- float64(donePieces) / float64(len(t.PieceHashes)) * 100
+		// numWorkers := runtime.NumGoroutine() - 1
+		// log.Printf("(%0.2f%%) Downloaded piece #%d from %d peers\n", percent, res.index, numWorkers)
 	}
 
 	close(workQueue)
