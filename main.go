@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"torry/torrentfile"
+	// tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -15,9 +17,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = tf.D2f(outputPath)
+	progressChan := make(chan float64)
+
+	go func() {
+		for p := range progressChan {
+			fmt.Printf("PROGRESS: %.2f%%\n", p)
+		}
+	}()
+
+	err = tf.D2f(outputPath, progressChan)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
