@@ -10,7 +10,6 @@ import (
 
 func main() {
 	inputPath := os.Args[1]
-	outputPath := os.Args[2]
 
 	tf, err := torrentfile.OpenTorrentFile(inputPath)
 	if err != nil {
@@ -18,14 +17,22 @@ func main() {
 	}
 
 	progressChan := make(chan float64)
+	buffChan := make(chan []byte)
 
 	go func() {
 		for p := range progressChan {
-			fmt.Printf("PROGRESS: %.2f%%\n", p)
+			fmt.Printf("\rPROGRESS: %.2f%%", p)
 		}
 	}()
 
-	err = tf.D2f(outputPath, progressChan)
+	// TODO: eventually write the bytes to disk and clear the in-mem buffer
+	// go func() {
+	// 	for b := range buffChan {
+	// 		fmt.Printf("\rBuffer%d", b[0])
+	// 	}
+	// }()
+
+	err = tf.D2f(&progressChan, &buffChan)
 	if err != nil {
 		log.Fatal(err)
 	}
