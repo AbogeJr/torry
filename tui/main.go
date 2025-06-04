@@ -3,52 +3,33 @@ package main
 import (
 	"errors"
 	"fmt"
-	"math/rand"
+	"log"
 	"os"
 	"strconv"
 	"strings"
-	"time"
+	"torry/torrentfile"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 const HEADER = `
 ████████╗ ██████╗ ██████╗ ██████╗ ██╗   ██╗
 ╚══██╔══╝██╔═══██╗██╔══██╗██╔══██╗╚██╗ ██╔╝
-   ██║   ██║   ██║██████╔╝██████╔╝ ╚████╔╝ 
-   ██║   ██║   ██║██╔══██╗██╔══██╗  ╚██╔╝  
-   ██║   ╚██████╔╝██║  ██║██║  ██║   ██║   
-   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝                               
+   ██║   ██║   ██║██████╔╝██████╔╝ ╚████╔╝
+   ██║   ██║   ██║██╔══██╗██╔══██╗  ╚██╔╝
+   ██║   ╚██████╔╝██║  ██║██║  ██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝
 `
 
 type model struct {
-	message   string
-	err       error
-	input     textinput.Model
-	sub       chan struct{}
-	responses int
-	spinner   spinner.Model
+	err        error
+	tf         torrentfile.TorrentFile
+	selectedTf string
+	// progressChan chan float64
+	// bufferChan   chan []byte
 }
 
 type clearErrorMsg struct{}
-type responseMsg struct{}
-
-func listenForActivity(sub chan struct{}) tea.Cmd {
-	return func() tea.Msg {
-		for {
-			time.Sleep(time.Millisecond * time.Duration(rand.Int63n(90)+100))
-			sub <- struct{}{}
-		}
-	}
-}
-
-func waitForActivity(sub chan struct{}) tea.Cmd {
-	return func() tea.Msg {
-		return responseMsg(<-sub)
-	}
-}
 
 func clearError() tea.Cmd {
 	return func() tea.Msg {
@@ -56,23 +37,20 @@ func clearError() tea.Cmd {
 	}
 }
 
-func initialModel() model {
-	input := textinput.New()
-	input.Prompt = "aj>>> "
-	input.Placeholder = "Your custom messge..."
-	input.CharLimit = 250
-	input.Width = 50
+func initialModel(filepath string) model {
+	tf, err := torrentfile.OpenTorrentFile(filepath)
+	if err != nil {
+		log.Fatal(err, tf)
+	}
+
 	return model{
-		message: "Message",
-		input:   input,
-		sub:     make(chan struct{}),
-		spinner: spinner.New(),
+		tf:         tf,
+		selectedTf: filepath,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tea.SetWindowTitle("TORRY"), listenForActivity(m.sub),
-		waitForActivity(m.sub), m.spinner.Tick)
+	return tea.Batch(tea.SetWindowTitle("TORRY"))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -80,53 +58,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if !m.input.Focused() {
-			switch msg.String() {
-			case "ctrl+c", "esc", "q":
-				return m, tea.Quit
-			case "e":
-				if m.err != nil {
-					m.err = nil
-				} else {
-					m.err = errors.New("damn son")
-				}
-			case "m":
-				if m.message != "Bubbletea" {
-					m.message = "Bubbletea"
-				} else {
-					m.message = "New Message"
-				}
-			case "c":
-				return m, clearError()
-			case "i":
-				m.input.Focus()
-				m.input.Reset()
+		switch msg.String() {
+		case "ctrl+c", "esc", "q":
+			return m, tea.Quit
+		case "e":
+			if m.err != nil {
+				m.err = nil
+			} else {
+				m.err = errors.New("damn son")
 			}
-		} else {
-			if msg.String() == "esc" {
-				m.input.Reset()
-				m.input.Blur()
-			}
-			if msg.String() == "enter" {
-				m.message = m.input.Value()
-				m.input.Reset()
-				m.input.Blur()
-			}
+
+		case "c":
+			return m, clearError()
+
 		}
 
 	case clearErrorMsg:
 		m.err = nil
-	case responseMsg:
-		m.responses++
-		m.message = fmt.Sprintf("\n\nDownload %d%s", m.responses, "%")
-		return m, waitForActivity(m.sub)
-	case spinner.TickMsg:
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
 	}
-
-	m.input, cmd = m.input.Update(msg)
-
 	return m, cmd
 }
 
@@ -139,19 +88,32 @@ func (m model) View() string {
 		s.WriteString("Error:")
 		s.WriteString(m.err.Error())
 	}
-	s.WriteString("\nMessage: ")
-	s.WriteString(m.message)
-	s.WriteString("\n ")
-	s.WriteString(m.spinner.View())
-	s.WriteString(" Responses: ")
-	s.WriteString(strconv.Itoa(m.responses))
+	s.WriteString("A torrent client ")
+	s.WriteString("\n\n")
+	s.WriteString("Selected Torrent File: ")
+	s.WriteString(m.selectedTf)
+	s.WriteString("\n")
+	s.WriteString("Announce URL: ")
+	s.WriteString(m.tf.Announce)
+	s.WriteString("\n")
+	s.WriteString("Name: ")
+	s.WriteString(m.tf.Name)
+	s.WriteString("\n")
+	s.WriteString("Length: ")
+	s.WriteString(strconv.Itoa(m.tf.Length))
+	s.WriteString("\n")
+	s.WriteString("Pieces: ")
+	s.WriteString(strconv.Itoa(int(len(m.tf.PieceHashes))))
+	s.WriteString("\n")
+
 	s.WriteString("\n\n\n")
-	s.WriteString(m.input.View())
+	// s.WriteString(m.input.View())
 	return s.String()
 }
 
 func main() {
-	p := tea.NewProgram(initialModel())
+	inputPath := os.Args[1]
+	p := tea.NewProgram(initialModel(inputPath))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
