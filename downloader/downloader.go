@@ -171,7 +171,7 @@ func (t *Torrent) calculatePieceSize(index int) int {
 }
 
 func (t *Torrent) Download(progressChan *chan float64, buffChan *chan []byte) ([]byte, error) {
-	log.Println("Starting Download for", t.Name)
+	// log.Println("Starting Download for", t.Name)
 
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
