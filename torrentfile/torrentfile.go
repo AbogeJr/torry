@@ -186,7 +186,7 @@ func (t *TorrentFile) getPeers(peerID [20]byte, port uint16) ([]peers.Peer, erro
 	return peers, nil
 }
 
-func (t *TorrentFile) D2f(path string, progressChan chan<- float64) error {
+func (t *TorrentFile) D2f(progressChan *chan float64, buffChan *chan []byte) error {
 	var peerID [20]byte
 	_, err := rand.Read(peerID[:])
 	if err != nil {
@@ -208,14 +208,12 @@ func (t *TorrentFile) D2f(path string, progressChan chan<- float64) error {
 		Name:        t.Name,
 	}
 
-	fmt.Println(torrent.Name)
-
-	buf, err := torrent.Download(progressChan)
+	buf, err := torrent.Download(progressChan, buffChan)
 	if err != nil {
 		return err
 	}
 
-	outFile, err := os.Create(path)
+	outFile, err := os.Create(torrent.Name)
 	if err != nil {
 		return err
 	}

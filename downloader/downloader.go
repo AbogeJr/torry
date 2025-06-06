@@ -123,13 +123,13 @@ func checkIntegrity(pw *pieceWork, buf []byte) error {
 func (t *Torrent) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork, results chan *pieceResult) {
 	c, err := client.New(peer, t.InfoHash, t.PeerID)
 	if err != nil {
-		fmt.Println(err.Error())
-		log.Printf("Could not complete handshake. Disconnecting. peer: %s", peer.Stringify())
+		// 	fmt.Println(err.Error())
+		// fmt.Printf("Could not complete handshake. Disconnecting. peer: %s", peer.Stringify())
 		return
 	}
 
 	defer c.Conn.Close()
-	log.Printf("Completed Handshake. peer: %s\n", peer.Stringify())
+	// fmt.Printf("Completed Handshake. peer: %s\n", peer.Stringify())
 
 	c.SendInterested()
 
@@ -170,8 +170,8 @@ func (t *Torrent) calculatePieceSize(index int) int {
 	return end - begin
 }
 
-func (t *Torrent) Download(progressChan chan<- float64) ([]byte, error) {
-	log.Println("Starting Download for", t.Name)
+func (t *Torrent) Download(progressChan *chan float64, buffChan *chan []byte) ([]byte, error) {
+	// log.Println("Starting Download for", t.Name)
 
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
@@ -193,7 +193,8 @@ func (t *Torrent) Download(progressChan chan<- float64) ([]byte, error) {
 		copy(buf[begin:end], res.buf)
 		donePieces++
 
-		progressChan <- float64(donePieces) / float64(len(t.PieceHashes)) * 100
+		*progressChan <- float64(donePieces) / float64(len(t.PieceHashes)) * 100
+		*buffChan <- buf[begin:end]
 		// numWorkers := runtime.NumGoroutine() - 1
 		// log.Printf("(%0.2f%%) Downloaded piece #%d from %d peers\n", percent, res.index, numWorkers)
 	}
